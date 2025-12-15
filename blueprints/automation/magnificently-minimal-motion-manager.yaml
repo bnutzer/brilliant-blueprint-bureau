@@ -65,12 +65,12 @@ blueprint:
       name: Brightness Level (optional)
       description: >
         Set brightness percentage when turning on lights.
-        If not specified, lights use their last brightness or default level.
+        Leave at 0 to use last brightness or default level.
         This setting only affects lights, not switches.
-      default: null
+      default: 0
       selector:
         number:
-          min: 1
+          min: 0
           max: 100
           unit_of_measurement: "%"
 
@@ -86,6 +86,9 @@ blueprint:
 
 mode: restart
 max_exceeded: silent
+
+variables:
+  brightness_pct: !input brightness_pct
 
 trigger:
   platform: state
@@ -104,10 +107,10 @@ condition:
 action:
   - alias: "Turn on the targets (lights or switches)"
     choose:
-      # If brightness is configured, use domain-specific services
+      # If brightness is configured (greater than 0), use domain-specific services
       - conditions:
           - condition: template
-            value_template: "{{ brightness_pct is not none }}"
+            value_template: "{{ brightness_pct > 0 }}"
         sequence:
           # Turn on lights with brightness
           - service: light.turn_on
@@ -117,7 +120,7 @@ action:
           # Turn on switches without brightness
           - service: switch.turn_on
             target: !input targets
-    # Otherwise, turn on without brightness
+    # Otherwise, turn on all targets without brightness
     default:
       - service: homeassistant.turn_on
         target: !input targets
