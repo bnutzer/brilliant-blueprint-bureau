@@ -1,0 +1,137 @@
+blueprint:
+  name: Magnificently Minimal Motion Manager -- Motion-activated lighting with luminance control
+  description: >
+    Turn on lights or switches when motion is detected and luminance is below a threshold.
+    Automatically turns off after a configurable timeout when motion stops.
+    Optional custom conditions allow time windows or other constraints.
+  domain: automation
+  author: Bastian Friedrich (bnutzer)
+
+  input:
+    motion_entity:
+      name: Motion Sensor
+      description: Binary sensor that detects motion or occupancy.
+      selector:
+        entity:
+          filter:
+            device_class:
+              - motion
+              - occupancy
+            domain: binary_sensor
+
+    luminance_sensor_entity:
+      name: Luminance Sensor
+      description: Sensor measuring light level. Lights turn on only when below the threshold.
+      selector:
+        entity:
+          filter:
+            device_class:
+              - illuminance
+            domain: sensor
+
+    luminance_max:
+      name: Maximum Luminance
+      description: Lights will not turn on when ambient light exceeds this level (in lux).
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 200
+          unit_of_measurement: lx
+
+    targets:
+      name: Targets
+      description: >
+        Lights and/or switches to control when motion is detected.
+        Will turn on when motion detected and luminance is below threshold.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+
+    no_motion_wait:
+      name: Wait Time
+      description: Time to keep the lights on after motion stops being detected.
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+    brightness_pct:
+      name: Brightness Level (optional)
+      description: >
+        Set brightness percentage when turning on lights.
+        If not specified, lights use their last brightness or default level.
+        This setting only affects lights, not switches.
+      default: null
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
+    custom_conditions:
+      name: Custom Conditions (optional)
+      description: >
+        Optional additional conditions to control when motion triggers the lights.
+        Useful for time windows (e.g., only at night) or other constraints.
+        If not provided, only motion and luminance will be checked.
+      default: []
+      selector:
+        condition: {}
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  platform: state
+  entity_id: !input motion_entity
+  from: "off"
+  to: "on"
+
+condition:
+  - condition: numeric_state
+    entity_id: !input luminance_sensor_entity
+    below: !input luminance_max
+
+  - condition: and
+    conditions: !input custom_conditions
+
+action:
+  - alias: "Turn on the targets (lights or switches)"
+    choose:
+      # If brightness is configured, use domain-specific services
+      - conditions:
+          - condition: template
+            value_template: "{{ brightness_pct is not none }}"
+        sequence:
+          # Turn on lights with brightness
+          - service: light.turn_on
+            target: !input targets
+            data:
+              brightness_pct: !input brightness_pct
+          # Turn on switches without brightness
+          - service: switch.turn_on
+            target: !input targets
+    # Otherwise, turn on without brightness
+    default:
+      - service: homeassistant.turn_on
+        target: !input targets
+
+  - alias: "Wait until motion stops"
+    wait_for_trigger:
+      platform: state
+      entity_id: !input motion_entity
+      from: "on"
+      to: "off"
+
+  - alias: "Wait for the configured timeout"
+    delay: !input no_motion_wait
+
+  - alias: "Turn off the targets (lights or switches)"
+    service: homeassistant.turn_off
+    target: !input targets

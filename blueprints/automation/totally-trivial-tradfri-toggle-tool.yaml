@@ -1,0 +1,433 @@
+blueprint:
+  name: Totally Trivial Tradfri Toggle Tool
+  description: >
+    IKEA Tradfri five-button remote controller for lights (via Zigbee2MQTT).
+    Toggle: Toggle lights on/off
+    Brightness Up/Down: Click = ±10%, Hold = smooth dimming
+    Arrow Left/Right: Cycle through color temperatures or colors (configurable)
+    Optional: Configure a state helper (input_text) for precise brightness calculation on button release
+  domain: automation
+  author: Bastian Friedrich (bnutzer)
+
+  input:
+    remote:
+      name: Tradfri remote
+      selector:
+        device:
+          filter:
+          - integration: mqtt
+            manufacturer: IKEA
+            model: TRADFRI remote control
+          - integration: mqtt
+            manufacturer: IKEA
+            model: TRADFRI remote control (E1524/E1810)
+
+    light_targets:
+      name: Light Targets
+      description: >
+        Lights to control with this remote.
+        Toggle: ON/OFF, Brightness: ±10% click or smooth hold, Arrows: Color cycling
+      selector:
+        target:
+          entity:
+            domain: light
+
+    transition_time:
+      name: Transition Time
+      description: Time to go from 0% to 100% (or vice versa) when holding brightness button (seconds)
+      default: 4
+      selector:
+        number:
+          min: 2
+          max: 20
+          step: 1
+          unit_of_measurement: s
+
+    state_helper:
+      name: State Helper (optional)
+      description: >
+        Optional input_text helper to store dimming state for precise button release calculation.
+        Home Assistant can create this helper for you directly when you click the field (recommended),
+        or create one manually via Settings > Devices & Services > Helpers > Create Helper > Text.
+        If not provided, uses ±10% brightness steps on release.
+      default: ""
+      selector:
+        entity:
+          domain: input_text
+
+    left_right_mode:
+      name: Left/Right Button Mode
+      description: >
+        Choose what the left/right arrow buttons control.
+        Color Temperature: Cycle through warmth levels (2200K to 6500K).
+        Color: Cycle through IKEA's color palette (rainbow sequence).
+      default: "color_temperature"
+      selector:
+        select:
+          options:
+            - label: Color Temperature
+              value: color_temperature
+            - label: Color
+              value: color
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  light_targets: !input light_targets
+  transition_time: !input transition_time
+  state_helper: !input state_helper
+  left_right_mode: !input left_right_mode
+  # Color temperature sequence in Kelvin (warm to cool)
+  color_temps: [2200, 2700, 3000, 4000, 5000, 6500]
+  # IKEA color hue sequence (0-360 degrees)
+  color_hues: [0, 30, 60, 90, 120, 160, 180, 200, 220, 260, 300]
+
+trigger:
+  # Toggle button - click
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: toggle
+    id: button_toggle
+
+  # Brightness Up - click
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_up_click
+    id: button_up_click
+
+  # Brightness Up - hold
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_up_hold
+    id: button_up_hold
+
+  # Brightness Up - release
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_up_release
+    id: button_up_release
+
+  # Brightness Down - click
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_down_click
+    id: button_down_click
+
+  # Brightness Down - hold
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_down_hold
+    id: button_down_hold
+
+  # Brightness Down - release
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_down_release
+    id: button_down_release
+
+  # Arrow Left - click
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: arrow_left_click
+    id: button_left
+
+  # Arrow Right - click
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: arrow_right_click
+    id: button_right
+
+action:
+  - choose:
+      # Toggle button - toggle lights on/off
+      - conditions:
+          - condition: trigger
+            id: button_toggle
+        sequence:
+          - service: light.toggle
+            target: !input light_targets
+
+      # Brightness Up - click: +10%
+      - conditions:
+          - condition: trigger
+            id: button_up_click
+        sequence:
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_step_pct: 10
+
+      # Brightness Down - click: -10%
+      - conditions:
+          - condition: trigger
+            id: button_down_click
+        sequence:
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_step_pct: -10
+
+      # Brightness Up - hold: DIM UP (smooth transition to max)
+      - conditions:
+          - condition: trigger
+            id: button_up_hold
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'up',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: 100
+              transition: "{{ transition_time }}"
+
+      # Brightness Down - hold: DIM DOWN (smooth transition to min)
+      - conditions:
+          - condition: trigger
+            id: button_down_hold
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'down',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: 1
+              transition: "{{ transition_time }}"
+
+      # Brightness Up - release: stop dimming precisely or nudge up
+      - conditions:
+          - condition: trigger
+            id: button_up_release
+        sequence:
+          - choose:
+              # If helper is configured, calculate precise brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_helper != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      brightness_pct: >
+                        {% set state_json = states(state_helper) %}
+                        {% set state_data = state_json | from_json if state_json else {} %}
+                        {% set elapsed = now().timestamp() - state_data.get('timestamp', 0) %}
+                        {% set progress = (elapsed / transition_time) | float %}
+                        {% set progress = 1.0 if progress > 1.0 else progress %}
+                        {% set start_pct = (state_data.get('start_brightness', 0) / 255 * 100) | round(1) %}
+                        {% set target_pct = 100 %}
+                        {{ (start_pct + (target_pct - start_pct) * progress) | round(1) }}
+                      transition: 0
+            # Fallback: use approximate nudge up
+            default:
+              - service: light.turn_on
+                target: !input light_targets
+                data:
+                  brightness_step_pct: 10
+                  transition: 0
+
+      # Brightness Down - release: stop dimming precisely or nudge down
+      - conditions:
+          - condition: trigger
+            id: button_down_release
+        sequence:
+          - choose:
+              # If helper is configured, calculate precise brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_helper != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      brightness_pct: >
+                        {% set state_json = states(state_helper) %}
+                        {% set state_data = state_json | from_json if state_json else {} %}
+                        {% set elapsed = now().timestamp() - state_data.get('timestamp', 0) %}
+                        {% set progress = (elapsed / transition_time) | float %}
+                        {% set progress = 1.0 if progress > 1.0 else progress %}
+                        {% set start_pct = (state_data.get('start_brightness', 0) / 255 * 100) | round(1) %}
+                        {% set target_pct = 1 %}
+                        {{ (start_pct - (start_pct - target_pct) * progress) | round(1) }}
+                      transition: 0
+            # Fallback: use approximate nudge down
+            default:
+              - service: light.turn_on
+                target: !input light_targets
+                data:
+                  brightness_step_pct: -10
+                  transition: 0
+
+      # Arrow Left - cycle to previous color/temperature
+      - conditions:
+          - condition: trigger
+            id: button_left
+        sequence:
+          - choose:
+              # Color Temperature mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ left_right_mode == 'color_temperature' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      kelvin: >
+                        {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                        {% set first_light = lights | first if lights else none %}
+                        {% if first_light and first_light.attributes.color_temp_kelvin %}
+                          {% set current = first_light.attributes.color_temp_kelvin %}
+                          {# Find closest value in sequence using namespace for mutable state #}
+                          {% set ns = namespace(closest_idx=0, min_diff=(color_temps[0] - current) | abs) %}
+                          {% for i in range(color_temps | length) %}
+                            {% set diff = (color_temps[i] - current) | abs %}
+                            {% if diff < ns.min_diff %}
+                              {% set ns.closest_idx = i %}
+                              {% set ns.min_diff = diff %}
+                            {% endif %}
+                          {% endfor %}
+                          {# Move to previous, with wraparound #}
+                          {% set new_idx = (ns.closest_idx - 1) if ns.closest_idx > 0 else (color_temps | length) - 1 %}
+                          {{ color_temps[new_idx] }}
+                        {% else %}
+                          {{ color_temps[0] }}
+                        {% endif %}
+              # Color mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ left_right_mode == 'color' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      hs_color: >
+                        {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                        {% set first_light = lights | first if lights else none %}
+                        {% if first_light and first_light.attributes.hs_color %}
+                          {% set current = first_light.attributes.hs_color[0] %}
+                          {# Find closest hue in sequence using namespace for mutable state #}
+                          {% set ns = namespace(closest_idx=0, min_diff=(color_hues[0] - current) | abs) %}
+                          {% for i in range(color_hues | length) %}
+                            {% set diff = (color_hues[i] - current) | abs %}
+                            {% if diff < ns.min_diff %}
+                              {% set ns.closest_idx = i %}
+                              {% set ns.min_diff = diff %}
+                            {% endif %}
+                          {% endfor %}
+                          {# Move to previous, with wraparound #}
+                          {% set new_idx = (ns.closest_idx - 1) if ns.closest_idx > 0 else (color_hues | length) - 1 %}
+                          [{{ color_hues[new_idx] }}, 100]
+                        {% else %}
+                          [{{ color_hues[0] }}, 100]
+                        {% endif %}
+
+      # Arrow Right - cycle to next color/temperature
+      - conditions:
+          - condition: trigger
+            id: button_right
+        sequence:
+          - choose:
+              # Color Temperature mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ left_right_mode == 'color_temperature' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      kelvin: >
+                        {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                        {% set first_light = lights | first if lights else none %}
+                        {% if first_light and first_light.attributes.color_temp_kelvin %}
+                          {% set current = first_light.attributes.color_temp_kelvin %}
+                          {# Find closest value in sequence using namespace for mutable state #}
+                          {% set ns = namespace(closest_idx=0, min_diff=(color_temps[0] - current) | abs) %}
+                          {% for i in range(color_temps | length) %}
+                            {% set diff = (color_temps[i] - current) | abs %}
+                            {% if diff < ns.min_diff %}
+                              {% set ns.closest_idx = i %}
+                              {% set ns.min_diff = diff %}
+                            {% endif %}
+                          {% endfor %}
+                          {# Move to next, with wraparound #}
+                          {% set new_idx = (ns.closest_idx + 1) % (color_temps | length) %}
+                          {{ color_temps[new_idx] }}
+                        {% else %}
+                          {{ color_temps[0] }}
+                        {% endif %}
+              # Color mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ left_right_mode == 'color' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      hs_color: >
+                        {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                        {% set first_light = lights | first if lights else none %}
+                        {% if first_light and first_light.attributes.hs_color %}
+                          {% set current = first_light.attributes.hs_color[0] %}
+                          {# Find closest hue in sequence using namespace for mutable state #}
+                          {% set ns = namespace(closest_idx=0, min_diff=(color_hues[0] - current) | abs) %}
+                          {% for i in range(color_hues | length) %}
+                            {% set diff = (color_hues[i] - current) | abs %}
+                            {% if diff < ns.min_diff %}
+                              {% set ns.closest_idx = i %}
+                              {% set ns.min_diff = diff %}
+                            {% endif %}
+                          {% endfor %}
+                          {# Move to next, with wraparound #}
+                          {% set new_idx = (ns.closest_idx + 1) % (color_hues | length) %}
+                          [{{ color_hues[new_idx] }}, 100]
+                        {% else %}
+                          [{{ color_hues[0] }}, 100]
+                        {% endif %}

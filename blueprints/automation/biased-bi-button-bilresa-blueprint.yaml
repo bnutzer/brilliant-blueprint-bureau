@@ -1,0 +1,267 @@
+blueprint:
+  name: Biased Bi-Button BILRESA -- Simple light/switch controller with IKEA Bilresa
+  description: >
+    IKEA Bilresa button controller for lights and switches.
+    Button 1: single press = ON, double press = +10% brightness, long press = DIM UP
+    Button 2: single press = OFF, double press = -10% brightness, long press = DIM DOWN
+    Long press: lights get brightness transition, switches get simple ON/OFF
+    Optional: Configure a state helper (input_text) for precise brightness calculation on long_release
+    Works with event devices that have two event entities (e.g., event.*_button_1 and event.*_button_2), and "light" or "switch" domain targets
+  domain: automation
+  author: Bastian Friedrich (bnutzer)
+#
+# Dual-button Bilresa has these event types:
+#      event_types:
+#        - multi_press_1
+#        - multi_press_2
+#        - long_press
+#        - long_release
+#
+#
+  input:
+    button1_event:
+      name: Button 1 – Event Entity
+      description: Event entity for button 1 (e.g., event.bilresa_transporter_room_button_1).
+      selector:
+        entity:
+          domain: event
+
+    button2_event:
+      name: Button 2 – Event Entity
+      description: Event entity for button 2 (e.g., event.bilresa_transporter_room_button_2).
+      selector:
+        entity:
+          domain: event
+
+    targets:
+      name: Targets
+      description: >
+        Lights and/or switches to control with this button.
+        Button 1: ON/DIM UP (lights), Button 2: OFF/DIM DOWN (lights)
+        Long press: switches receive simple ON/OFF, lights receive brightness transition
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+
+    transition_time:
+      name: Transition Time
+      description: Time to go from 0% to 100% (or vice versa) when holding button (seconds)
+      default: 4
+      selector:
+        number:
+          min: 2
+          max: 20
+          step: 1
+          unit_of_measurement: s
+
+    state_helper:
+      name: State Helper (optional)
+      description: >
+        Optional input_text helper to store dimming state for precise long_release calculation.
+        Home Assistant can create this helper for you directly when you click the field (recommended),
+        or create one manually via Settings > Devices & Services > Helpers > Create Helper > Text.
+        If not provided, uses approximate ±10% brightness steps on release.
+      default: ""
+      selector:
+        entity:
+          domain: input_text
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  targets: !input targets
+  transition_time: !input transition_time
+  state_helper: !input state_helper
+
+trigger:
+  # Button 1 - any event (triggers on state/timestamp change)
+  - platform: state
+    entity_id: !input button1_event
+    id: button1
+
+  # Button 2 - any event (triggers on state/timestamp change)
+  - platform: state
+    entity_id: !input button2_event
+    id: button2
+
+action:
+  - choose:
+      # Button 1 - single press: turn ON
+      - conditions:
+          - condition: trigger
+            id: button1
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'multi_press_1' }}"
+        sequence:
+          - service: homeassistant.turn_on
+            target: !input targets
+
+      # Button 1 - double press: brightness +10%
+      - conditions:
+          - condition: trigger
+            id: button1
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'multi_press_2' }}"
+        sequence:
+          - service: light.turn_on
+            target: !input targets
+            data:
+              brightness_step_pct: 10
+
+      # Button 1 - long press: DIM UP (lights) / ON (switches)
+      - conditions:
+          - condition: trigger
+            id: button1
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'long_press' }}"
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'up',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input targets
+            data:
+              brightness_pct: 100
+              transition: "{{ transition_time }}"
+          - service: switch.turn_on
+            target: !input targets
+
+      # Button 2 - single press: turn OFF
+      - conditions:
+          - condition: trigger
+            id: button2
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'multi_press_1' }}"
+        sequence:
+          - service: homeassistant.turn_off
+            target: !input targets
+
+      # Button 2 - double press: brightness -10%
+      - conditions:
+          - condition: trigger
+            id: button2
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'multi_press_2' }}"
+        sequence:
+          - service: light.turn_on
+            target: !input targets
+            data:
+              brightness_step_pct: -10
+
+      # Button 2 - long press: DIM DOWN (lights) / OFF (switches)
+      - conditions:
+          - condition: trigger
+            id: button2
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'long_press' }}"
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'down',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input targets
+            data:
+              brightness_pct: 1
+              transition: "{{ transition_time }}"
+          - service: switch.turn_off
+            target: !input targets
+
+      # Button 1 - long release: stop dimming precisely or nudge up
+      - conditions:
+          - condition: trigger
+            id: button1
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'long_release' }}"
+        sequence:
+          - choose:
+              # If helper is configured, calculate precise brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_helper != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input targets
+                    data:
+                      brightness_pct: >
+                        {% set state_json = states(state_helper) %}
+                        {% set state_data = state_json | from_json if state_json else {} %}
+                        {% set elapsed = now().timestamp() - state_data.get('timestamp', 0) %}
+                        {% set progress = (elapsed / transition_time) | float %}
+                        {% set progress = 1.0 if progress > 1.0 else progress %}
+                        {% set start_pct = (state_data.get('start_brightness', 0) / 255 * 100) | round(1) %}
+                        {% set target_pct = 100 %}
+                        {{ (start_pct + (target_pct - start_pct) * progress) | round(1) }}
+                      transition: 0
+            # Fallback: use approximate nudge
+            default:
+              - service: light.turn_on
+                target: !input targets
+                data:
+                  brightness_step_pct: 10
+                  transition: 0
+
+      # Button 2 - long release: stop dimming precisely or nudge down
+      - conditions:
+          - condition: trigger
+            id: button2
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.event_type == 'long_release' }}"
+        sequence:
+          - choose:
+              # If helper is configured, calculate precise brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_helper != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input targets
+                    data:
+                      brightness_pct: >
+                        {% set state_json = states(state_helper) %}
+                        {% set state_data = state_json | from_json if state_json else {} %}
+                        {% set elapsed = now().timestamp() - state_data.get('timestamp', 0) %}
+                        {% set progress = (elapsed / transition_time) | float %}
+                        {% set progress = 1.0 if progress > 1.0 else progress %}
+                        {% set start_pct = (state_data.get('start_brightness', 0) / 255 * 100) | round(1) %}
+                        {% set target_pct = 1 %}
+                        {{ (start_pct - (start_pct - target_pct) * progress) | round(1) }}
+                      transition: 0
+            # Fallback: use approximate nudge
+            default:
+              - service: light.turn_on
+                target: !input targets
+                data:
+                  brightness_step_pct: -10
+                  transition: 0

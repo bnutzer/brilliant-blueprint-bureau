@@ -1,0 +1,48 @@
+blueprint:
+  name: Satisfyingly Simple Smart Switch Setup -- Physical Switch Toggle Controller
+  description: >
+    Toggle target entities (lights, switches, etc.) whenever a physical switch changes state.
+    Perfect for Shelly relays behind wall switches. Works on both edges (off→on and on→off).
+    External control of targets (via app/automation) doesn't interfere with functionality.
+  domain: automation
+  author: Bastian Friedrich (bnutzer)
+  input:
+    controlling_switch:
+      name: Controlling Switch
+      description: The physical switch entity whose state changes trigger the toggle (e.g., Shelly relay or binary sensor).
+      selector:
+        entity:
+          domain:
+            - switch
+            - binary_sensor
+
+    targets:
+      name: Target Entities
+      description: >
+        Devices to toggle when the controlling switch changes state.
+        Typically lights, but can also include other switches.
+      selector:
+        target:
+          entity:
+            domain:
+              - light
+              - switch
+
+mode: queued
+
+trigger:
+  # Edge: off -> on
+  - platform: state
+    entity_id: !input controlling_switch
+    from: "off"
+    to: "on"
+
+  # Edge: on -> off
+  - platform: state
+    entity_id: !input controlling_switch
+    from: "on"
+    to: "off"
+
+action:
+  - service: homeassistant.toggle
+    target: !input targets
