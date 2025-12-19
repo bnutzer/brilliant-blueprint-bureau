@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The Brilliant Blueprint Bureau is a collection of Home Assistant blueprints for automating smart home devices. Includes blueprints for:
 - IKEA Matter-over-Thread devices (Bilresa two-button switch)
-- IKEA Zigbee2MQTT devices (Rodret dimmer, Styrbar remote, Tradfri five-button remote)
+- IKEA Zigbee2MQTT devices (Rodret dimmer, Styrbar remote, Tradfri two-button switch, Tradfri five-button remote)
 - Physical switch controllers (Shelly relays, wall switches)
 - Motion-activated lighting (motion sensors with luminance control)
 
@@ -37,10 +37,11 @@ The Rodret/Styrbar/Tradfri blueprints use device triggers for MQTT actions:
 - Triggers use `trigger: device` with `domain: mqtt`
 - Action types specified via `subtype` field
 - Common action types:
-  - Rodret/Styrbar: `on`, `off`, `brightness_move_up`, `brightness_move_down`, `brightness_stop`
-  - Tradfri: `toggle`, `brightness_up_click`, `brightness_up_hold`, `brightness_up_release`, `brightness_down_click`, `brightness_down_hold`, `brightness_down_release`
-- Arrow buttons: `arrow_left_click`, `arrow_right_click` (Styrbar and Tradfri)
-- Tradfri-specific: Uses separate click/hold/release events for brightness, allowing both discrete steps (±10% on click) and smooth dimming (on hold)
+  - Rodret/Styrbar/Tradfri two-button: `on`, `off`, `brightness_move_up`, `brightness_move_down`, `brightness_stop`
+  - Tradfri five-button: `toggle`, `brightness_up_click`, `brightness_up_hold`, `brightness_up_release`, `brightness_down_click`, `brightness_down_hold`, `brightness_down_release`
+- Arrow buttons: `arrow_left_click`, `arrow_right_click` (Styrbar and Tradfri five-button)
+- Tradfri five-button specific: Uses separate click/hold/release events for brightness, allowing both discrete steps (±10% on click) and smooth dimming (on hold)
+- Tradfri two-button (E1743): Simpler on/off switch using the same MQTT action pattern as Rodret/Styrbar
 
 #### Motion Sensors
 The Motion Manager blueprint uses state-based triggers for motion detection:

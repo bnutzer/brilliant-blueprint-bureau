@@ -14,9 +14,10 @@ These blueprints prioritize simplicity for default scenarios. They won't include
 
 1. **[Biased Bi-Button Bilresa Blueprint](#biased-bi-button-bilresa-blueprint)** - Full-featured IKEA Bilresa two-button switch controller with dimming
 2. **[Ridiculously Redundant Remote Ritual](#ridiculously-redundant-remote-ritual)** - IKEA Rodret/Styrbar remote controller with precise dimming
-3. **[Totally Trivial Tradfri Toggle Tool](#totally-trivial-tradfri-toggle-tool)** - IKEA Tradfri five-button remote with toggle, dimming, and color cycling
-4. **[Satisfyingly Simple Smart Switch Setup](#satisfyingly-simple-smart-switch-setup)** - Toggle lights/switches with physical wall switches (e.g., Shelly relays)
-5. **[Magnificently Minimal Motion Manager](#magnificently-minimal-motion-manager)** - Motion-activated lighting with luminance control and optional time windows
+3. **[Tiny Tradfri Two-tap Tool](#tiny-tradfri-two-tap-tool)** - IKEA Tradfri two-button on/off switch with smooth dimming
+4. **[Totally Trivial Tradfri Toggle Tool](#totally-trivial-tradfri-toggle-tool)** - IKEA Tradfri five-button remote with toggle, dimming, and color cycling
+5. **[Satisfyingly Simple Smart Switch Setup](#satisfyingly-simple-smart-switch-setup)** - Toggle lights/switches with physical wall switches (e.g., Shelly relays)
+6. **[Magnificently Minimal Motion Manager](#magnificently-minimal-motion-manager)** - Motion-activated lighting with luminance control and optional time windows
 
 ---
 
@@ -164,6 +165,63 @@ Now you can:
 - Single press Down to reduce lighting for stealth training exercises
 - Hold Up/Down to smoothly dim, release to stop precisely where needed
 - (Styrbar only) Press Left/Right to cycle through different training mode temperatures
+
+---
+
+## Tiny Tradfri Two-tap Tool
+
+**File:** `tiny-tradfri-two-tap-tool.yaml`
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https://raw.githubusercontent.com/bnutzer/brilliant-blueprint-bureau/main/blueprints/automation/tiny-tradfri-two-tap-tool.yaml)
+
+### Overview
+
+A straightforward controller for the IKEA Tradfri two-button on/off switch via Zigbee2MQTT. Features precise dimming control with optional state tracking for smooth brightness transitions.
+
+### Requirements
+
+- **IKEA Tradfri on/off switch** (E1743) connected via Zigbee2MQTT
+- **Target devices:** Smart lights (individual entities or groups)
+- **Optional:** Input text helper for precise dimming (recommended for best experience)
+
+### Button Behavior
+
+| Button | Action | Behavior |
+|--------|--------|----------|
+| **Up** | Single press | Turn ON |
+| | Long press | Dim UP (smooth transition to 100%) |
+| | Release | Stop at current brightness |
+| **Down** | Single press | Turn OFF |
+| | Long press | Dim DOWN (smooth transition to 1%) |
+| | Release | Stop at current brightness |
+
+### Configuration Options
+
+- **Tradfri on/off switch** - Select your Tradfri two-button switch from Zigbee2MQTT
+- **Light Targets** - Choose lights to control (supports groups)
+- **Transition Time** (2-20 seconds, default 4) - Duration for 0%→100% dimming on long press
+- **State Helper** (optional) - Input text helper for precise brightness calculation on button release
+  - Home Assistant can create this for you in-place when configuring the blueprint
+  - Without this: Uses simple brightness step on release
+  - With this: Calculates exact brightness based on hold duration
+
+### Usage Example
+
+**Scenario:** Control the Titan Tower training room lights with a Tradfri two-tap switch mounted by the tactical training terminal
+
+1. Ensure your Tradfri two-button switch is connected via Zigbee2MQTT and appears as a device
+2. Create a new automation from the blueprint
+3. Select your Tradfri on/off switch device from the dropdown
+4. Select `light.titan_tower_training_room` as the target
+5. (Optional) For the State Helper field, let Home Assistant create a helper in-place (or create one named "Tradfri Titan Tower state")
+6. Set transition time to 4 seconds for smooth tactical lighting transitions
+7. Save the automation
+
+Now you can:
+- Single press Up to turn on training room lights for team drills
+- Single press Down to turn off lights when training concludes
+- Hold Up/Down to smoothly dim, release to stop precisely at the training intensity threshold
+- Quickly toggle between tactical briefing brightness and full combat training illumination
 
 ---
 

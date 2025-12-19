@@ -1,0 +1,215 @@
+blueprint:
+  name: Tiny Tradfri Two-tap Tool
+  description: >
+    IKEA Tradfri two-button on/off switch controller for lights (via Zigbee2MQTT).
+    Button Up: single press = ON, long press = DIM UP
+    Button Down: single press = OFF, long press = DIM DOWN
+    Optional: Configure a state helper (input_text) for precise brightness calculation on button release
+  domain: automation
+  author: Bastian Friedrich (bnutzer)
+
+  input:
+    remote:
+      name: Tradfri on/off switch
+      selector:
+        device:
+          filter:
+          - integration: mqtt
+            manufacturer: IKEA
+            model: TRADFRI on/off switch
+          - integration: mqtt
+            manufacturer: IKEA
+            model: TRADFRI on/off switch (E1743)
+
+    light_targets:
+      name: Light Targets
+      description: >
+        Lights to control with this switch.
+        Button Up: ON/DIM UP, Button Down: OFF/DIM DOWN
+      selector:
+        target:
+          entity:
+            domain: light
+
+    transition_time:
+      name: Transition Time
+      description: Time to go from 0% to 100% (or vice versa) when holding button (seconds)
+      default: 4
+      selector:
+        number:
+          min: 2
+          max: 20
+          step: 1
+          unit_of_measurement: s
+
+    state_helper:
+      name: State Helper (optional)
+      description: >
+        Optional input_text helper to store dimming state for precise button release calculation.
+        Home Assistant can create this helper for you directly when you click the field (recommended),
+        or create one manually via Settings > Devices & Services > Helpers > Create Helper > Text.
+        If not provided, uses a simple brightness step on release.
+      default: ""
+      selector:
+        entity:
+          domain: input_text
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  light_targets: !input light_targets
+  transition_time: !input transition_time
+  state_helper: !input state_helper
+
+trigger:
+  # Button UP - short press
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: "on"
+    id: button_up_short
+
+  # Button UP - long press (hold)
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_move_up
+    id: button_up_long
+
+  # Button DOWN - short press
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: "off"
+    id: button_down_short
+
+  # Button DOWN - long press (hold)
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_move_down
+    id: button_down_long
+
+  # Button release after long press
+  - trigger: device
+    device_id: !input remote
+    domain: mqtt
+    type: action
+    subtype: brightness_stop
+    id: button_stop
+
+action:
+  - choose:
+      # Button UP - short press: turn ON
+      - conditions:
+          - condition: trigger
+            id: button_up_short
+        sequence:
+          - service: light.turn_on
+            target: !input light_targets
+
+      # Button UP - long press: DIM UP (smooth transition to max)
+      - conditions:
+          - condition: trigger
+            id: button_up_long
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'up',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: 100
+              transition: "{{ transition_time }}"
+
+      # Button DOWN - short press: turn OFF
+      - conditions:
+          - condition: trigger
+            id: button_down_short
+        sequence:
+          - service: light.turn_off
+            target: !input light_targets
+
+      # Button DOWN - long press: DIM DOWN (smooth transition to min)
+      - conditions:
+          - condition: trigger
+            id: button_down_long
+        sequence:
+          # Save state to helper if provided
+          - if:
+              - condition: template
+                value_template: "{{ state_helper != '' }}"
+            then:
+              - service: input_text.set_value
+                data:
+                  entity_id: "{{ state_helper }}"
+                  value: >
+                    {% set lights = expand(light_targets.entity_id) | selectattr('domain', 'eq', 'light') | list %}
+                    {% set first_light = lights | first if lights else none %}
+                    {{ {
+                      'timestamp': now().timestamp(),
+                      'direction': 'down',
+                      'start_brightness': first_light.attributes.brightness if first_light and first_light.attributes.brightness else 0
+                    } | to_json }}
+          # Start dimming
+          - service: light.turn_on
+            target: !input light_targets
+            data:
+              brightness_pct: 1
+              transition: "{{ transition_time }}"
+
+      # Button release: stop dimming at precise brightness
+      - conditions:
+          - condition: trigger
+            id: button_stop
+        sequence:
+          - choose:
+              # If helper is configured, calculate precise brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ state_helper != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target: !input light_targets
+                    data:
+                      brightness_pct: >
+                        {% set state_json = states(state_helper) %}
+                        {% set state_data = state_json | from_json if state_json else {} %}
+                        {% set elapsed = now().timestamp() - state_data.get('timestamp', 0) %}
+                        {% set progress = (elapsed / transition_time) | float %}
+                        {% set progress = 1.0 if progress > 1.0 else progress %}
+                        {% set start_pct = (state_data.get('start_brightness', 0) / 255 * 100) | round(1) %}
+                        {% if state_data.get('direction') == 'up' %}
+                          {% set target_pct = 100 %}
+                          {{ (start_pct + (target_pct - start_pct) * progress) | round(1) }}
+                        {% else %}
+                          {% set target_pct = 1 %}
+                          {{ (start_pct - (start_pct - target_pct) * progress) | round(1) }}
+                        {% endif %}
+                      transition: 0
+            # Fallback: simple brightness step
+            default:
+              - service: light.turn_on
+                target: !input light_targets
+                data:
+                  brightness_step: 1
+                  transition: 0
